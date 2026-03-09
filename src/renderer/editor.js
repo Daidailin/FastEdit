@@ -360,7 +360,7 @@ class LargeFileEditor {
                 renderItem: (index) => this.renderContentLine(index + 1)
             });
 
-            // 初始化行号虚拟滚动列表
+            // 初始化行号虚拟滚动列表 - 使用相同的虚拟高度
             this.lineNumberVirtualList = new VirtualScrollList({
                 container: this.lineNumbersEl,
                 itemHeight: this.lineHeight,
@@ -369,6 +369,14 @@ class LargeFileEditor {
                 containerHeight: lineNumbersHeight,
                 renderItem: (index) => this.renderLineNumber(index + 1)
             });
+
+            // 确保两个列表使用相同的虚拟高度和缩放比例
+            if (this.contentVirtualList.scrollScale > 1) {
+                this.lineNumberVirtualList.virtualHeight = this.contentVirtualList.virtualHeight;
+                this.lineNumberVirtualList.scrollScale = this.contentVirtualList.scrollScale;
+                this.lineNumberVirtualList.actualHeight = this.contentVirtualList.actualHeight;
+                this.lineNumberVirtualList.contentEl.style.height = this.contentVirtualList.virtualHeight + 'px';
+            }
 
             // 同步两个列表的滚动
             this.syncScroll();
@@ -491,11 +499,12 @@ class LargeFileEditor {
         const scrollTop = this.editorScrollEl.scrollTop;
         const viewportHeight = this.editorScrollEl.clientHeight;
 
-        // 计算可视区域的行号范围
-        const visibleStartLine = Math.floor(scrollTop / this.lineHeight) + 1;
+        // 获取当前实际行索引（0-based）
+        const currentIndex = this.contentVirtualList.getCurrentLine();
+        const visibleStartLine = currentIndex + 1;
         const visibleEndLine = Math.min(
             this.totalLines,
-            Math.ceil((scrollTop + viewportHeight) / this.lineHeight)
+            currentIndex + Math.ceil(viewportHeight / this.lineHeight)
         );
 
         // 更新行号宽度（基于可视区域的最大行号）
@@ -503,6 +512,12 @@ class LargeFileEditor {
 
         // 同步行号列表的滚动位置
         this.lineNumbersEl.scrollTop = scrollTop;
+
+        // 同步行号列表的可视区域块位置
+        if (this.lineNumberVirtualList.viewportEl && this.contentVirtualList.viewportEl) {
+            const contentTransform = this.contentVirtualList.viewportEl.style.transform;
+            this.lineNumberVirtualList.viewportEl.style.transform = contentTransform;
+        }
 
         // 更新当前行号
         this.currentLine = visibleStartLine;
@@ -528,11 +543,15 @@ class LargeFileEditor {
     }
 
     onEditorClick(e) {
-        const rect = this.editorContentEl.getBoundingClientRect();
-        const scrollTop = this.editorScrollEl.scrollTop;
+        const rect = this.editorScrollEl.getBoundingClientRect();
+        const virtualY = e.clientY - rect.top + this.editorScrollEl.scrollTop;
 
-        const clickY = e.clientY - rect.top + scrollTop;
-        const line = Math.floor(clickY / this.lineHeight) + 1;
+        let line;
+        if (this.contentVirtualList) {
+            line = this.contentVirtualList.virtualToActual(virtualY) + 1;
+        } else {
+            line = Math.floor(virtualY / this.lineHeight) + 1;
+        }
 
         const clickedLineEl = e.target.closest('.line');
         if (clickedLineEl) {
@@ -642,9 +661,11 @@ class LargeFileEditor {
     }
 
     ensureLineInView() {
-        const cursorY = (this.currentLine - 1) * this.lineHeight;
         const scrollTop = this.editorScrollEl.scrollTop;
         const viewportHeight = this.editorScrollEl.clientHeight;
+        const cursorY = this.contentVirtualList
+            ? this.contentVirtualList.actualToVirtual(this.currentLine - 1)
+            : (this.currentLine - 1) * this.lineHeight;
 
         if (cursorY < scrollTop) {
             this.editorScrollEl.scrollTop = cursorY;
@@ -659,7 +680,9 @@ class LargeFileEditor {
 
         const charWidth = this.measureCharWidth();
         const x = (col - 1) * charWidth;
-        const y = (line - 1) * this.lineHeight;
+        const y = this.contentVirtualList
+            ? this.contentVirtualList.actualToVirtual(line - 1)
+            : (line - 1) * this.lineHeight;
 
         this.cursorEl.style.display = 'block';
         this.cursorEl.style.left = x + 'px';
