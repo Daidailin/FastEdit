@@ -169,6 +169,11 @@ export class CompareEditor {
         this.lines = [];
         this.diffMap = new Map();
         
+        // 文件型数据源支持
+        this.fileSource = null;
+        this.lineCache = new Map();
+        this.maxCacheSize = 500;
+        
         this.init();
     }
     
@@ -216,7 +221,14 @@ export class CompareEditor {
             overflow: hidden;
             text-overflow: ellipsis;
         `;
-        lineEl.textContent = line || '';
+        
+        // 如果是文件型数据源，按需读取内容
+        if (this.fileSource && !line) {
+            this.loadLineFromFile(index, lineEl);
+            lineEl.textContent = '加载中...';
+        } else {
+            lineEl.textContent = line || '';
+        }
         
         // 应用差异样式
         const lineNum = index + 1;
@@ -227,6 +239,49 @@ export class CompareEditor {
         }
         
         return lineEl;
+    }
+
+    /**
+     * 从文件按需读取行内容
+     */
+    async loadLineFromFile(index, lineEl) {
+        if (!this.fileSource) return;
+
+        const lineNum = index + 1;
+
+        // 检查缓存
+        if (this.lineCache.has(lineNum)) {
+            lineEl.textContent = this.lineCache.get(lineNum) || '';
+            return;
+        }
+
+        try {
+            // 批量读取附近行
+            const startLine = Math.max(1, lineNum - 5);
+            const endLine = Math.min(this.fileSource.totalLines, lineNum + 5);
+
+            const lines = await window.electronAPI.readFileLines(startLine, endLine);
+
+            // 缓存读取的行
+            for (const line of lines) {
+                if (this.lineCache.size >= this.maxCacheSize) {
+                    const firstKey = this.lineCache.keys().next().value;
+                    this.lineCache.delete(firstKey);
+                }
+                this.lineCache.set(line.lineNum, line.content);
+            }
+
+            // 更新当前行
+            const currentLine = this.lineCache.get(lineNum);
+            if (lineEl && lineEl.parentNode) {
+                lineEl.textContent = currentLine || '';
+            }
+        } catch (error) {
+            console.error(`读取第 ${lineNum} 行失败:`, error);
+            if (lineEl && lineEl.parentNode) {
+                lineEl.textContent = '';
+            }
+        }
     }
     
     /**
@@ -249,15 +304,62 @@ export class CompareEditor {
      * 设置文本内容
      */
     setText(text) {
+        this.fileSource = null; // 清除文件型数据源
         this.lines = text ? text.split('\n') : [];
         this.virtualScroll.setData(this.lines);
     }
-    
+
+    /**
+     * 设置文件型数据源
+     */
+    setFileSource(fileInfo) {
+        this.fileSource = fileInfo;
+        this.lines = []; // 不保存全文
+        this.lineCache.clear();
+
+        // 创建占位数组，虚拟滚动只渲染可见区域
+        const placeholderLines = new Array(fileInfo.totalLines).fill('');
+        this.virtualScroll.setData(placeholderLines);
+    }
+
     /**
      * 获取文本内容
      */
     getText() {
+        if (this.fileSource) {
+            // 文件型数据源：需要读取全文
+            return this.getFullTextFromFile();
+        }
         return this.lines.join('\n');
+    }
+
+    /**
+     * 从文件读取全文（用于比较）
+     */
+    async getFullTextFromFile() {
+        if (!this.fileSource) return '';
+
+        const lines = [];
+        const BATCH_SIZE = 1000;
+        const totalLines = this.fileSource.totalLines;
+
+        for (let batchStart = 1; batchStart <= totalLines; batchStart += BATCH_SIZE) {
+            const batchEnd = Math.min(batchStart + BATCH_SIZE - 1, totalLines);
+
+            try {
+                const batchLines = await window.electronAPI.readFileLines(batchStart, batchEnd);
+                for (const line of batchLines) {
+                    lines.push(line.content);
+                }
+            } catch (error) {
+                console.error(`读取第 ${batchStart}-${batchEnd} 行失败:`, error);
+                for (let i = batchStart; i <= batchEnd; i++) {
+                    lines.push('');
+                }
+            }
+        }
+
+        return lines.join('\n');
     }
     
     /**
@@ -286,6 +388,9 @@ export class CompareEditor {
      * 获取总行数
      */
     getLineCount() {
+        if (this.fileSource) {
+            return this.fileSource.totalLines;
+        }
         return this.lines.length;
     }
     

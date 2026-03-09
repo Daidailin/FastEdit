@@ -16,6 +16,11 @@ class CompareRenderer {
         this.originalEditor = null;
         this.compareEditor = null;
 
+        // 文件型数据源支持
+        this.originalFileInfo = null; // 原始文档文件信息
+        this.originalLineCache = new Map(); // 原始文档行缓存
+        this.compareFileInfo = null; // 比较文档文件信息
+
         this.initElements();
         this.initEditors();
         this.initEventListeners();
@@ -51,6 +56,28 @@ class CompareRenderer {
         // 大文件警告
         this.originalWarning = document.getElementById('original-warning');
         this.compareWarning = document.getElementById('compare-warning');
+
+        // 初始化虚拟化行号
+        this.initVirtualLineNumbers();
+    }
+
+    /**
+     * 初始化虚拟化行号
+     */
+    initVirtualLineNumbers() {
+        // 原始文档行号虚拟滚动
+        this.originalLineNumbersContent = document.createElement('div');
+        this.originalLineNumbersContent.className = 'line-numbers-content';
+        this.originalLineNumbersContent.style.position = 'relative';
+        this.originalLineNumbers.innerHTML = '';
+        this.originalLineNumbers.appendChild(this.originalLineNumbersContent);
+
+        // 比较文档行号虚拟滚动
+        this.compareLineNumbersContent = document.createElement('div');
+        this.compareLineNumbersContent.className = 'line-numbers-content';
+        this.compareLineNumbersContent.style.position = 'relative';
+        this.compareLineNumbers.innerHTML = '';
+        this.compareLineNumbers.appendChild(this.compareLineNumbersContent);
     }
 
     initEditors() {
@@ -143,7 +170,13 @@ class CompareRenderer {
         if (window.electronAPI) {
             window.electronAPI.onCompareData((data) => {
                 if (data.original) {
-                    this.setOriginalText(data.original);
+                    if (typeof data.original === 'string') {
+                        // 文本型数据源
+                        this.setOriginalText(data.original);
+                    } else if (data.original.type === 'file') {
+                        // 文件型数据源
+                        this.setOriginalFile(data.original);
+                    }
                 }
                 if (data.compare) {
                     this.setCompareText(data.compare);
@@ -156,18 +189,42 @@ class CompareRenderer {
     }
 
     /**
+     * 设置原始文档（文件型数据源）
+     */
+    async setOriginalFile(fileInfo) {
+        this.originalFileInfo = fileInfo;
+        this.originalText = ''; // 不保存全文
+
+        // 显示文件信息
+        this.originalInfo.textContent = `${fileInfo.totalLines.toLocaleString()} 行`;
+
+        // 大文件提示
+        if (fileInfo.totalLines > 10000) {
+            this.originalWarning.classList.add('visible');
+            this.originalWarning.textContent = `大文件模式：已启用虚拟滚动，显示全文（${fileInfo.totalLines.toLocaleString()} 行）；比较操作可能较慢`;
+        } else {
+            this.originalWarning.classList.remove('visible');
+        }
+
+        // 设置虚拟滚动编辑器使用按行读取
+        this.originalEditor.setFileSource(fileInfo);
+        this.updateLineNumbers('original');
+        this.clearCompareResult();
+    }
+
+    /**
      * 设置原始文档文本
      */
     setOriginalText(text) {
-        // 限制大文件
-        const MAX_LINES = 10000;
+        this.originalFileInfo = null; // 清除文件信息
         const lines = text.split('\n');
+        this.originalText = text;
 
-        if (lines.length > MAX_LINES) {
-            this.originalText = lines.slice(0, MAX_LINES).join('\n');
+        // 大文件提示（不截断）
+        if (lines.length > 10000) {
             this.originalWarning.classList.add('visible');
+            this.originalWarning.textContent = `大文件模式：已启用虚拟滚动，显示全文（${lines.length.toLocaleString()} 行）；比较操作可能较慢`;
         } else {
-            this.originalText = text;
             this.originalWarning.classList.remove('visible');
         }
 
@@ -181,15 +238,14 @@ class CompareRenderer {
      * 设置比较文档文本
      */
     setCompareText(text) {
-        // 限制大文件
-        const MAX_LINES = 10000;
         const lines = text.split('\n');
+        this.compareText = text;
 
-        if (lines.length > MAX_LINES) {
-            this.compareText = lines.slice(0, MAX_LINES).join('\n');
+        // 大文件提示（不截断）
+        if (lines.length > 10000) {
             this.compareWarning.classList.add('visible');
+            this.compareWarning.textContent = `大文件模式：已启用虚拟滚动，显示全文（${lines.length.toLocaleString()} 行）；比较操作可能较慢`;
         } else {
-            this.compareText = text;
             this.compareWarning.classList.remove('visible');
         }
 
@@ -272,33 +328,91 @@ class CompareRenderer {
      * 更新行数信息
      */
     updateLineInfo(target) {
-        const lineCount = target === 'original'
-            ? this.originalEditor.getLineCount()
-            : this.compareEditor.getLineCount();
+        let lineCount;
+        if (target === 'original') {
+            // 优先使用文件信息中的行数
+            lineCount = this.originalFileInfo
+                ? this.originalFileInfo.totalLines
+                : this.originalEditor.getLineCount();
+        } else {
+            lineCount = this.compareEditor.getLineCount();
+        }
         const infoEl = target === 'original' ? this.originalInfo : this.compareInfo;
-        infoEl.textContent = `${lineCount} 行`;
+        infoEl.textContent = `${lineCount.toLocaleString()} 行`;
     }
 
     /**
-     * 更新行号显示
+     * 更新行号显示（虚拟化）
      */
     updateLineNumbers(target) {
         const editor = target === 'original' ? this.originalEditor : this.compareEditor;
         const lineNumbersEl = target === 'original' ? this.originalLineNumbers : this.compareLineNumbers;
-        const lineCount = editor.getLineCount();
+        const lineNumbersContent = target === 'original' ? this.originalLineNumbersContent : this.compareLineNumbersContent;
 
-        const lineNumbersContent = lineNumbersEl.querySelector('.line-numbers-content');
-        lineNumbersContent.innerHTML = '';
-
-        for (let i = 1; i <= lineCount; i++) {
-            const lineEl = document.createElement('div');
-            lineEl.className = 'line';
-            lineEl.textContent = i;
-            lineNumbersContent.appendChild(lineEl);
+        // 优先使用文件信息中的行数
+        let lineCount;
+        if (target === 'original' && this.originalFileInfo) {
+            lineCount = this.originalFileInfo.totalLines;
+        } else {
+            lineCount = editor.getLineCount();
         }
 
-        // 同步滚动位置
-        this.syncScroll(target);
+        // 设置总高度撑开滚动条
+        const totalHeight = lineCount * 22;
+        lineNumbersContent.style.height = totalHeight + 'px';
+
+        // 初始渲染可见行号
+        this.renderVisibleLineNumbers(target);
+    }
+
+    /**
+     * 渲染可见行号
+     */
+    renderVisibleLineNumbers(target) {
+        const editor = target === 'original' ? this.originalEditor : this.compareEditor;
+        const lineNumbersEl = target === 'original' ? this.originalLineNumbers : this.compareLineNumbers;
+        const lineNumbersContent = target === 'original' ? this.originalLineNumbersContent : this.compareLineNumbersContent;
+
+        // 优先使用文件信息中的行数
+        let lineCount;
+        if (target === 'original' && this.originalFileInfo) {
+            lineCount = this.originalFileInfo.totalLines;
+        } else {
+            lineCount = editor.getLineCount();
+        }
+
+        // 获取当前可见范围
+        const scrollTop = editor.virtualScroll.scrollTop;
+        const containerHeight = lineNumbersEl.clientHeight;
+        const itemHeight = 22;
+        const bufferSize = 5;
+
+        const startLine = Math.max(0, Math.floor(scrollTop / itemHeight) - bufferSize);
+        const endLine = Math.min(lineCount - 1, Math.ceil((scrollTop + containerHeight) / itemHeight) + bufferSize);
+
+        // 清空并重新渲染
+        lineNumbersContent.innerHTML = '';
+
+        // 创建可视区域容器
+        const viewport = document.createElement('div');
+        viewport.style.position = 'absolute';
+        viewport.style.top = '0';
+        viewport.style.left = '0';
+        viewport.style.right = '0';
+        viewport.style.transform = `translateY(${startLine * itemHeight}px)`;
+
+        // 渲染可见行号
+        for (let i = startLine; i <= endLine; i++) {
+            const lineEl = document.createElement('div');
+            lineEl.className = 'line';
+            lineEl.textContent = i + 1;
+            lineEl.dataset.line = i + 1;
+            lineEl.style.height = itemHeight + 'px';
+            lineEl.style.lineHeight = itemHeight + 'px';
+            viewport.appendChild(lineEl);
+        }
+
+        lineNumbersContent.appendChild(viewport);
     }
 
     /**
@@ -317,53 +431,106 @@ class CompareRenderer {
      * 执行比较
      */
     async performCompare() {
-        this.originalText = this.originalEditor.getText();
-        this.compareText = this.compareEditor.getText();
-
-        if (!this.originalText && !this.compareText) {
-            this.updateSimilarity(0);
-            return;
-        }
-
-        // 检查文件大小，如果太大则提示用户
-        const originalLines = this.originalText.split('\n').length;
-        const compareLines = this.compareText.split('\n').length;
-        const MAX_LINES = 10000;
-
-        if (originalLines > MAX_LINES || compareLines > MAX_LINES) {
-            const shouldContinue = confirm(
-                `文档较大（${Math.max(originalLines, compareLines)} 行），比较可能需要较长时间。\n` +
-                `建议只比较部分内容，或使用其他专业比较工具。\n\n` +
-                `是否继续比较？`
-            );
-            if (!shouldContinue) {
-                return;
-            }
-        }
-
+        // 立即禁用按钮，防止重复点击
         this.isComparing = true;
         this.btnCompare.disabled = true;
-        this.btnCompare.textContent = '比较中...';
-
-        // 使用 requestAnimationFrame 让 UI 先更新
-        await new Promise(resolve => requestAnimationFrame(resolve));
+        this.btnCompare.textContent = '准备中...';
 
         try {
+            // 获取原始文档文本
+            let originalText = '';
+            if (this.originalFileInfo) {
+                // 文件型数据源：需要读取全文
+                this.btnCompare.textContent = '读取原始文档...';
+
+                const BATCH_SIZE = 5000;
+                const totalLines = this.originalFileInfo.totalLines;
+                const totalBatches = Math.ceil(totalLines / BATCH_SIZE);
+                const lines = [];
+                let currentBatch = 0;
+
+                for (let batchStart = 1; batchStart <= totalLines; batchStart += BATCH_SIZE) {
+                    currentBatch++;
+                    const batchEnd = Math.min(batchStart + BATCH_SIZE - 1, totalLines);
+
+                    try {
+                        console.log(`[比较] 读取第 ${currentBatch}/${totalBatches} 批: ${batchStart}-${batchEnd} 行`);
+                        const batchLines = await window.electronAPI.readFileLines(batchStart, batchEnd);
+                        for (const line of batchLines) {
+                            lines.push(line.content);
+                        }
+                    } catch (error) {
+                        console.error(`[比较] 读取第 ${batchStart}-${batchEnd} 行失败:`, error);
+                        for (let i = batchStart; i <= batchEnd; i++) {
+                            lines.push('');
+                        }
+                    }
+
+                    // 更新进度：按批次数计算
+                    const progress = Math.round((currentBatch / totalBatches) * 50);
+                    this.btnCompare.textContent = `读取原始文档... ${progress}%`;
+
+                    // 让出事件循环（使用浏览器兼容的 setTimeout）
+                    await new Promise(resolve => setTimeout(resolve, 0));
+                }
+
+                originalText = lines.join('\n');
+                console.log(`[比较] 原始文档读取完成，共 ${lines.length} 行`);
+            } else {
+                originalText = this.originalText;
+            }
+
+            // 获取比较文档文本
+            const compareText = this.compareText;
+
+            if (!originalText && !compareText) {
+                this.updateSimilarity(0);
+                console.log('[比较] 两个文档都为空，跳过比较');
+                return;
+            }
+
+            this.btnCompare.textContent = '比较中...';
+
+            // 使用 requestAnimationFrame 让 UI 先更新
+            await new Promise(resolve => requestAnimationFrame(resolve));
+
+            console.log('[比较] 开始执行比较...');
+            console.log(`[比较] 原始文档: ${originalText.length} 字符`);
+            console.log(`[比较] 比较文档: ${compareText.length} 字符`);
+
             // 使用主进程的比较功能
             const result = await window.electronAPI.compareTexts({
-                original: this.originalText,
-                compare: this.compareText
+                original: originalText,
+                compare: compareText
             });
+
+            console.log('[比较] 比较完成:', result);
 
             this.updateSimilarity(result.similarity);
             this.diffLines = result.diffLines || [];
+
+            // 显示比较模式
+            if (result.mode) {
+                const modeNames = {
+                    'precise': '精确比较',
+                    'line': '行级比较',
+                    'simplified': '简化比较',
+                    'navigation': '导航模式'
+                };
+                const modeName = modeNames[result.mode] || result.mode;
+                this.originalWarning.classList.add('visible');
+                this.originalWarning.textContent = `比较模式: ${modeName} | 原始: ${result.originalLines.toLocaleString()} 行 | 比较: ${result.compareLines.toLocaleString()} 行`;
+            }
+
             this.highlightDifferences(result.diffMap);
             this.updateNavigationButtons();
 
         } catch (error) {
-            console.error('比较失败:', error);
+            console.error('[比较] 执行失败:', error);
+            console.error('[比较] 错误堆栈:', error.stack);
             alert('比较失败: ' + error.message);
         } finally {
+            console.log('[比较] 清理状态');
             this.isComparing = false;
             this.btnCompare.disabled = false;
             this.btnCompare.textContent = '开始比较';
@@ -465,8 +632,8 @@ class CompareRenderer {
             prevHighlighted.style.backgroundColor = '';
         }
 
-        // 添加新的高亮
-        const lineEl = this.compareLineNumbers.querySelector(`.line:nth-child(${lineNum})`);
+        // 查找当前可见范围内的行号元素
+        const lineEl = this.compareLineNumbers.querySelector(`.line[data-line="${lineNum}"]`);
         if (lineEl) {
             lineEl.classList.add('current-diff');
             lineEl.style.backgroundColor = 'rgba(255, 255, 0, 0.5)';
@@ -486,9 +653,13 @@ class CompareRenderer {
         if (source === 'original') {
             // 同步原始文档的行号滚动
             this.originalLineNumbers.scrollTop = this.originalEditor.virtualScroll.scrollTop;
+            // 更新虚拟化行号
+            this.renderVisibleLineNumbers('original');
         } else {
             // 同步比较文档的行号滚动
             this.compareLineNumbers.scrollTop = this.compareEditor.virtualScroll.scrollTop;
+            // 更新虚拟化行号
+            this.renderVisibleLineNumbers('compare');
         }
     }
 

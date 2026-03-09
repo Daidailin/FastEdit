@@ -564,13 +564,16 @@ ipcMain.handle('compare-texts', async (event, { original, compare }) => {
         const comparer = new TextComparer();
         comparer.setOriginal(original);
         comparer.setCompare(compare);
-        
+
         const result = comparer.computeDiff();
-        
+
         return {
             similarity: result.similarity,
-            diffLines: comparer.getAllDiffLines(),
-            diffMap: Object.fromEntries(result.diffMap)
+            diffLines: result.diffLines,
+            diffMap: Object.fromEntries(result.diffMap),
+            mode: result.mode,
+            originalLines: result.originalLines,
+            compareLines: result.compareLines
         };
     } catch (error) {
         console.error('文本比较失败:', error);

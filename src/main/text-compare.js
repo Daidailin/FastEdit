@@ -1,7 +1,6 @@
 /**
  * 文本比较模块
- * 实现基于 LCS (最长公共子序列) 的文本差异比较算法
- * 支持相似度计算和差异标记
+ * 优化版本：支持大文件分级比较策略
  */
 
 class TextComparer {
@@ -9,42 +8,66 @@ class TextComparer {
         this.originalLines = [];
         this.compareLines = [];
         this.diffResult = null;
+
+        // 比较模式阈值
+        this.THRESHOLDS = {
+            SMALL_FILE: 1000,      // 小文件：精确比较
+            MEDIUM_FILE: 10000,    // 中文件：仅行级比较
+            LARGE_FILE: 50000      // 大文件：简化模式
+        };
     }
 
-    /**
-     * 设置原始文档
-     * @param {string} text - 原始文本
-     */
     setOriginal(text) {
         this.originalLines = this.splitLines(text);
         this.diffResult = null;
     }
 
-    /**
-     * 设置比较文档
-     * @param {string} text - 比较文本
-     */
     setCompare(text) {
         this.compareLines = this.splitLines(text);
         this.diffResult = null;
     }
 
-    /**
-     * 分割文本为行数组
-     * @param {string} text - 文本内容
-     * @returns {string[]} 行数组
-     */
     splitLines(text) {
         if (!text) return [''];
-        // 统一换行符为 \n 后分割
         return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
     }
 
     /**
+     * 根据文件大小选择比较模式
+     */
+    getCompareMode() {
+        const maxLines = Math.max(this.originalLines.length, this.compareLines.length);
+
+        if (maxLines <= this.THRESHOLDS.SMALL_FILE) {
+            return 'precise';      // 精确模式：全量 LCS + 字符级相似度
+        } else if (maxLines <= this.THRESHOLDS.MEDIUM_FILE) {
+            return 'line';         // 行级模式：不做字符级相似度
+        } else if (maxLines <= this.THRESHOLDS.LARGE_FILE) {
+            return 'simplified';   // 简化模式：仅差异位置
+        } else {
+            return 'navigation';   // 导航模式：仅差异导航
+        }
+    }
+
+    /**
      * 计算文本相似度
-     * @returns {number} 相似度百分比 (0-100)
      */
     calculateSimilarity() {
+        const mode = this.getCompareMode();
+
+        if (mode === 'precise') {
+            // 小文件：使用 LCS 计算精确相似度
+            return this.calculateSimilarityPrecise();
+        } else {
+            // 大文件：使用轻量估算
+            return this.calculateSimilarityEstimate();
+        }
+    }
+
+    /**
+     * 精确相似度计算（小文件）
+     */
+    calculateSimilarityPrecise() {
         if (this.originalLines.length === 0 && this.compareLines.length === 0) {
             return 100.00;
         }
@@ -54,32 +77,70 @@ class TextComparer {
 
         const lcs = this.computeLCS(this.originalLines, this.compareLines);
         const maxLength = Math.max(this.originalLines.length, this.compareLines.length);
-        
+
         if (maxLength === 0) return 100.00;
-        
+
         const similarity = (lcs.length / maxLength) * 100;
         return parseFloat(similarity.toFixed(2));
     }
 
     /**
-     * 计算最长公共子序列 (LCS)
-     * 使用动态规划算法，时间复杂度 O(m*n)
-     * 为优化性能，使用滚动数组减少内存占用
-     * @param {string[]} arr1 - 第一个数组
-     * @param {string[]} arr2 - 第二个数组
-     * @returns {string[]} 最长公共子序列
+     * 轻量相似度估算（大文件）
+     * 使用抽样和哈希快速估算
+     */
+    calculateSimilarityEstimate() {
+        if (this.originalLines.length === 0 && this.compareLines.length === 0) {
+            return 100.00;
+        }
+        if (this.originalLines.length === 0 || this.compareLines.length === 0) {
+            return 0.00;
+        }
+
+        // 方法1：相同行比例
+        const originalSet = new Set(this.originalLines);
+        const compareSet = new Set(this.compareLines);
+
+        let matchCount = 0;
+        for (const line of originalSet) {
+            if (compareSet.has(line)) {
+                matchCount++;
+            }
+        }
+
+        const uniqueSimilarity = (matchCount / Math.max(originalSet.size, compareSet.size)) * 100;
+
+        // 方法2：抽样比较（最多抽样 1000 行）
+        const sampleSize = Math.min(1000, Math.min(this.originalLines.length, this.compareLines.length));
+        const step = Math.max(1, Math.floor(Math.min(this.originalLines.length, this.compareLines.length) / sampleSize));
+
+        let sampleMatches = 0;
+        let sampleTotal = 0;
+
+        for (let i = 0; i < Math.min(this.originalLines.length, this.compareLines.length); i += step) {
+            if (this.originalLines[i] === this.compareLines[i]) {
+                sampleMatches++;
+            }
+            sampleTotal++;
+        }
+
+        const sampleSimilarity = sampleTotal > 0 ? (sampleMatches / sampleTotal) * 100 : 0;
+
+        // 综合估算（加权平均）
+        const estimatedSimilarity = uniqueSimilarity * 0.4 + sampleSimilarity * 0.6;
+
+        return parseFloat(estimatedSimilarity.toFixed(2));
+    }
+
+    /**
+     * 计算 LCS（仅用于小文件）
      */
     computeLCS(arr1, arr2) {
         const m = arr1.length;
         const n = arr2.length;
-        
-        // 使用滚动数组优化内存，只保留两行
+
         let prev = new Array(n + 1).fill(0);
         let curr = new Array(n + 1).fill(0);
-        
-        // 记录路径用于回溯（为节省内存，只记录关键差异点）
-        const path = [];
-        
+
         for (let i = 1; i <= m; i++) {
             for (let j = 1; j <= n; j++) {
                 if (arr1[i - 1] === arr2[j - 1]) {
@@ -88,30 +149,22 @@ class TextComparer {
                     curr[j] = Math.max(prev[j], curr[j - 1]);
                 }
             }
-            // 交换数组
             [prev, curr] = [curr, prev];
         }
-        
+
         // 回溯获取 LCS
         const lcs = [];
         let i = m, j = n;
-        
-        // 为回溯需要，重新计算 DP 表的最后部分
-        // 优化：只存储必要的行
-        const dp = [];
-        const step = Math.max(1, Math.floor(Math.min(m, n) / 100)); // 最多存储 100 行
-        
-        // 简化的回溯：从后向前扫描
+
         while (i > 0 && j > 0) {
             if (arr1[i - 1] === arr2[j - 1]) {
                 lcs.unshift(arr1[i - 1]);
                 i--;
                 j--;
             } else {
-                // 简化的决策逻辑
                 const up = i > 1 ? this.countMatches(arr1, arr2, i - 2, j - 1) : -1;
                 const left = j > 1 ? this.countMatches(arr1, arr2, i - 1, j - 2) : -1;
-                
+
                 if (up >= left) {
                     i--;
                 } else {
@@ -119,13 +172,10 @@ class TextComparer {
                 }
             }
         }
-        
+
         return lcs;
     }
 
-    /**
-     * 辅助函数：计算从指定位置开始的匹配数
-     */
     countMatches(arr1, arr2, i, j) {
         let count = 0;
         while (i >= 0 && j >= 0 && arr1[i] === arr2[j]) {
@@ -138,217 +188,296 @@ class TextComparer {
 
     /**
      * 计算差异
-     * 使用 Myers 差异算法的简化版本
-     * @returns {object} 差异结果
      */
     computeDiff() {
         if (this.diffResult) {
             return this.diffResult;
         }
 
-        const original = this.originalLines;
-        const compare = this.compareLines;
-        
-        // 使用基于 LCS 的差异计算
-        const diff = this.computeDiffFromLCS(original, compare);
-        
+        const mode = this.getCompareMode();
+        let diff;
+
+        switch (mode) {
+            case 'precise':
+                diff = this.computeDiffPrecise();
+                break;
+            case 'line':
+                diff = this.computeDiffLine();
+                break;
+            case 'simplified':
+            case 'navigation':
+                diff = this.computeDiffSimplified();
+                break;
+            default:
+                diff = this.computeDiffSimplified();
+        }
+
         this.diffResult = {
             similarity: this.calculateSimilarity(),
-            originalLines: original.length,
-            compareLines: compare.length,
+            originalLines: this.originalLines.length,
+            compareLines: this.compareLines.length,
             changes: diff.changes,
-            diffMap: diff.diffMap
+            diffMap: diff.diffMap,
+            diffLines: diff.diffLines,
+            mode: mode
         };
-        
+
         return this.diffResult;
     }
 
     /**
-     * 基于 LCS 计算差异
-     * @param {string[]} original - 原始行
-     * @param {string[]} compare - 比较行
-     * @returns {object} 差异信息
+     * 精确差异计算（小文件）
      */
-    computeDiffFromLCS(original, compare) {
+    computeDiffPrecise() {
+        const diffMap = new Map();
+        const diffLines = [];
         const changes = [];
-        const diffMap = new Map(); // 比较文档行号 -> 差异类型
-        
+
         let i = 0, j = 0;
         let originalLineNum = 1;
         let compareLineNum = 1;
-        
-        // 简化的差异计算：逐行比较
-        while (i < original.length || j < compare.length) {
-            const origLine = i < original.length ? original[i] : null;
-            const compLine = j < compare.length ? compare[j] : null;
-            
+
+        while (i < this.originalLines.length || j < this.compareLines.length) {
+            const origLine = i < this.originalLines.length ? this.originalLines[i] : null;
+            const compLine = j < this.compareLines.length ? this.compareLines[j] : null;
+
             if (origLine === null) {
-                // 比较文档多出的行
-                changes.push({
-                    type: 'added',
-                    originalLine: null,
-                    compareLine: compareLineNum,
-                    content: compLine
-                });
                 diffMap.set(compareLineNum, 'added');
+                diffLines.push(compareLineNum);
+                changes.push({ type: 'added', compareLine: compareLineNum, content: compLine });
                 j++;
                 compareLineNum++;
             } else if (compLine === null) {
-                // 原始文档多出的行（在比较文档中删除）
-                changes.push({
-                    type: 'deleted',
-                    originalLine: originalLineNum,
-                    compareLine: null,
-                    content: origLine
-                });
+                changes.push({ type: 'deleted', originalLine: originalLineNum, content: origLine });
                 i++;
                 originalLineNum++;
             } else if (origLine === compLine) {
-                // 相同
-                changes.push({
-                    type: 'unchanged',
-                    originalLine: originalLineNum,
-                    compareLine: compareLineNum,
-                    content: compLine
-                });
+                changes.push({ type: 'unchanged', originalLine: originalLineNum, compareLine: compareLineNum });
                 i++;
                 j++;
                 originalLineNum++;
                 compareLineNum++;
             } else {
-                // 不同，需要查找最佳匹配
-                const match = this.findBestMatch(original, compare, i, j);
-                
+                const match = this.findBestMatch(i, j);
+
                 if (match.type === 'modified') {
+                    diffMap.set(compareLineNum, 'modified');
+                    diffLines.push(compareLineNum);
                     changes.push({
                         type: 'modified',
                         originalLine: originalLineNum,
                         compareLine: compareLineNum,
-                        originalContent: origLine,
-                        content: compLine,
-                        similarity: this.calculateLineSimilarity(origLine, compLine)
+                        similarity: match.similarity
                     });
-                    diffMap.set(compareLineNum, 'modified');
                     i++;
                     j++;
                     originalLineNum++;
                     compareLineNum++;
                 } else if (match.type === 'deleted') {
-                    changes.push({
-                        type: 'deleted',
-                        originalLine: originalLineNum,
-                        compareLine: null,
-                        content: origLine
-                    });
+                    changes.push({ type: 'deleted', originalLine: originalLineNum, content: origLine });
                     i++;
                     originalLineNum++;
                 } else {
-                    changes.push({
-                        type: 'added',
-                        originalLine: null,
-                        compareLine: compareLineNum,
-                        content: compLine
-                    });
                     diffMap.set(compareLineNum, 'added');
+                    diffLines.push(compareLineNum);
+                    changes.push({ type: 'added', compareLine: compareLineNum, content: compLine });
                     j++;
                     compareLineNum++;
                 }
             }
         }
-        
-        return { changes, diffMap };
+
+        return { diffMap, diffLines, changes };
     }
 
     /**
-     * 查找最佳匹配
-     * 决定当前行是修改、删除还是新增
+     * 行级差异计算（中文件）
+     * 不做字符级相似度
      */
-    findBestMatch(original, compare, i, j) {
-        const origLine = original[i];
-        const compLine = compare[j];
-        
-        // 计算当前行的相似度
-        const currentSimilarity = this.calculateLineSimilarity(origLine, compLine);
-        
-        // 查找原始行在比较文档中的最佳匹配
-        let bestMatchInCompare = -1;
-        let bestSimilarity = currentSimilarity;
-        const searchRange = Math.min(10, compare.length - j);
-        
-        for (let k = 1; k < searchRange; k++) {
-            const sim = this.calculateLineSimilarity(origLine, compare[j + k]);
-            if (sim > bestSimilarity) {
-                bestSimilarity = sim;
-                bestMatchInCompare = k;
+    computeDiffLine() {
+        const diffMap = new Map();
+        const diffLines = [];
+
+        let i = 0, j = 0;
+        let compareLineNum = 1;
+
+        while (i < this.originalLines.length || j < this.compareLines.length) {
+            const origLine = i < this.originalLines.length ? this.originalLines[i] : null;
+            const compLine = j < this.compareLines.length ? this.compareLines[j] : null;
+
+            if (origLine === null) {
+                diffMap.set(compareLineNum, 'added');
+                diffLines.push(compareLineNum);
+                j++;
+                compareLineNum++;
+            } else if (compLine === null) {
+                i++;
+            } else if (origLine === compLine) {
+                i++;
+                j++;
+                compareLineNum++;
+            } else {
+                // 简化判断：只在前后 3 行内查找
+                const foundInCompare = this.findLineInRange(this.compareLines, j + 1, j + 3, origLine);
+                const foundInOriginal = this.findLineInRange(this.originalLines, i + 1, i + 3, compLine);
+
+                if (foundInCompare !== -1) {
+                    // 原始行在比较文档后面找到，中间是新增
+                    for (let k = j; k < foundInCompare; k++) {
+                        diffMap.set(compareLineNum, 'added');
+                        diffLines.push(compareLineNum);
+                        compareLineNum++;
+                    }
+                    j = foundInCompare;
+                } else if (foundInOriginal !== -1) {
+                    // 比较行在原始文档后面找到，原始行被删除
+                    i = foundInOriginal;
+                } else {
+                    // 认为是修改
+                    diffMap.set(compareLineNum, 'modified');
+                    diffLines.push(compareLineNum);
+                    i++;
+                    j++;
+                    compareLineNum++;
+                }
             }
         }
-        
-        // 查找比较行在原始文档中的最佳匹配
-        let bestMatchInOriginal = -1;
-        bestSimilarity = currentSimilarity;
-        const searchRangeOrig = Math.min(10, original.length - i);
-        
-        for (let k = 1; k < searchRangeOrig; k++) {
-            const sim = this.calculateLineSimilarity(compare[j], original[i + k]);
-            if (sim > bestSimilarity) {
-                bestSimilarity = sim;
-                bestMatchInOriginal = k;
+
+        return { diffMap, diffLines, changes: [] };
+    }
+
+    /**
+     * 简化差异计算（大文件）
+     * 仅输出差异位置，不求完美对齐
+     */
+    computeDiffSimplified() {
+        const diffMap = new Map();
+        const diffLines = [];
+
+        const minLen = Math.min(this.originalLines.length, this.compareLines.length);
+
+        // 快速扫描：只比较对应位置
+        for (let i = 0; i < minLen; i++) {
+            if (this.originalLines[i] !== this.compareLines[i]) {
+                const compareLineNum = i + 1;
+                diffMap.set(compareLineNum, 'modified');
+                diffLines.push(compareLineNum);
             }
         }
-        
-        // 决策逻辑
-        if (bestMatchInCompare > 0 && bestMatchInCompare <= 3) {
-            // 原始行在比较文档后面找到更好的匹配，说明中间是新增的行
+
+        // 处理长度差异
+        if (this.compareLines.length > this.originalLines.length) {
+            for (let i = this.originalLines.length; i < this.compareLines.length; i++) {
+                const compareLineNum = i + 1;
+                diffMap.set(compareLineNum, 'added');
+                diffLines.push(compareLineNum);
+            }
+        }
+
+        return { diffMap, diffLines, changes: [] };
+    }
+
+    /**
+     * 在范围内查找行
+     */
+    findLineInRange(lines, start, end, target) {
+        const actualEnd = Math.min(end, lines.length);
+        for (let i = start; i < actualEnd; i++) {
+            if (lines[i] === target) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * 查找最佳匹配（仅用于精确模式）
+     */
+    findBestMatch(i, j) {
+        const origLine = this.originalLines[i];
+        const compLine = this.compareLines[j];
+
+        // 快速判断
+        if (origLine === compLine) {
+            return { type: 'unchanged' };
+        }
+
+        // 长度差异过大，不太可能是修改
+        const lenDiff = Math.abs(origLine.length - compLine.length);
+        const maxLen = Math.max(origLine.length, compLine.length);
+        if (maxLen > 0 && lenDiff / maxLen > 0.5) {
+            // 长度差异超过 50%，先检查是否是新增/删除
+            const foundInCompare = this.findLineInRange(this.compareLines, j + 1, j + 5, origLine);
+            if (foundInCompare !== -1) {
+                return { type: 'added' };
+            }
+
+            const foundInOriginal = this.findLineInRange(this.originalLines, i + 1, i + 5, compLine);
+            if (foundInOriginal !== -1) {
+                return { type: 'deleted' };
+            }
+        }
+
+        // 计算相似度（仅在必要时）
+        const similarity = this.calculateLineSimilarity(origLine, compLine);
+
+        if (similarity > 50) {
+            return { type: 'modified', similarity };
+        }
+
+        // 低相似度，检查是否是新增/删除
+        const foundInCompare = this.findLineInRange(this.compareLines, j + 1, j + 3, origLine);
+        if (foundInCompare !== -1) {
             return { type: 'added' };
-        } else if (bestMatchInOriginal > 0 && bestMatchInOriginal <= 3) {
-            // 比较行在原始文档后面找到更好的匹配，说明原始行被删除
-            return { type: 'deleted' };
-        } else if (currentSimilarity > 50) {
-            // 相似度足够高，认为是修改
-            return { type: 'modified' };
-        } else {
-            // 默认认为是修改
-            return { type: 'modified' };
         }
+
+        const foundInOriginal = this.findLineInRange(this.originalLines, i + 1, i + 3, compLine);
+        if (foundInOriginal !== -1) {
+            return { type: 'deleted' };
+        }
+
+        return { type: 'modified', similarity };
     }
 
     /**
      * 计算单行相似度
-     * @param {string} line1 - 第一行
-     * @param {string} line2 - 第二行
-     * @returns {number} 相似度 (0-100)
      */
     calculateLineSimilarity(line1, line2) {
         if (line1 === line2) return 100;
         if (!line1 || !line2) return 0;
-        
-        // 使用编辑距离计算相似度
+
+        // 快速判断：前缀/后缀
+        if (line1[0] === line2[0] || line1[line1.length - 1] === line2[line2.length - 1]) {
+            // 有共同边界，可能相似
+        }
+
+        // 使用编辑距离
         const distance = this.levenshteinDistance(line1, line2);
         const maxLen = Math.max(line1.length, line2.length);
-        
+
         if (maxLen === 0) return 100;
-        
+
         return ((maxLen - distance) / maxLen) * 100;
     }
 
     /**
-     * 计算编辑距离 (Levenshtein Distance)
-     * @param {string} s1 - 字符串1
-     * @param {string} s2 - 字符串2
-     * @returns {number} 编辑距离
+     * 编辑距离
      */
     levenshteinDistance(s1, s2) {
         const m = s1.length;
         const n = s2.length;
-        
-        // 使用滚动数组优化内存
+
+        // 短字符串优化
+        if (m === 0) return n;
+        if (n === 0) return m;
+
         let prev = new Array(n + 1);
         let curr = new Array(n + 1);
-        
+
         for (let j = 0; j <= n; j++) {
             prev[j] = j;
         }
-        
+
         for (let i = 1; i <= m; i++) {
             curr[0] = i;
             for (let j = 1; j <= n; j++) {
@@ -356,90 +485,64 @@ class TextComparer {
                     curr[j] = prev[j - 1];
                 } else {
                     curr[j] = Math.min(
-                        prev[j] + 1,      // 删除
-                        curr[j - 1] + 1,  // 插入
-                        prev[j - 1] + 1   // 替换
+                        prev[j] + 1,
+                        curr[j - 1] + 1,
+                        prev[j - 1] + 1
                     );
                 }
             }
             [prev, curr] = [curr, prev];
         }
-        
+
         return prev[n];
     }
 
-    /**
-     * 获取下一处差异
-     * @param {number} currentLine - 当前行号
-     * @returns {number|null} 下一处差异的行号
-     */
     getNextDiff(currentLine) {
         if (!this.diffResult) {
             this.computeDiff();
         }
-        
-        const diffMap = this.diffResult.diffMap;
-        const lines = Array.from(diffMap.keys()).sort((a, b) => a - b);
-        
+
+        const lines = this.diffResult.diffLines;
         for (const line of lines) {
             if (line > currentLine) {
                 return line;
             }
         }
-        
+
         return null;
     }
 
-    /**
-     * 获取上一处差异
-     * @param {number} currentLine - 当前行号
-     * @returns {number|null} 上一处差异的行号
-     */
     getPrevDiff(currentLine) {
         if (!this.diffResult) {
             this.computeDiff();
         }
-        
-        const diffMap = this.diffResult.diffMap;
-        const lines = Array.from(diffMap.keys()).sort((a, b) => b - a);
-        
+
+        const lines = [...this.diffResult.diffLines].reverse();
         for (const line of lines) {
             if (line < currentLine) {
                 return line;
             }
         }
-        
+
         return null;
     }
 
-    /**
-     * 获取所有差异行号
-     * @returns {number[]} 差异行号数组
-     */
     getAllDiffLines() {
         if (!this.diffResult) {
             this.computeDiff();
         }
-        
-        return Array.from(this.diffResult.diffMap.keys()).sort((a, b) => a - b);
+
+        return this.diffResult.diffLines;
     }
 
-    /**
-     * 检查指定行是否有差异
-     * @param {number} lineNum - 行号
-     * @returns {string|null} 差异类型或 null
-     */
     getLineDiffType(lineNum) {
         if (!this.diffResult) {
             this.computeDiff();
         }
-        
+
         return this.diffResult.diffMap.get(lineNum) || null;
     }
 
-    /**
-     * 清空数据
-     */
     clear() {
         this.originalLines = [];
         this.compareLines = [];

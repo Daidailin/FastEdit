@@ -117,11 +117,18 @@ class LargeFileEditor {
      */
     async openCompareWindow() {
         try {
-            // 获取当前文档内容作为原始文档
-            const originalText = await this.getCurrentDocumentText();
+            // 不再传全文，只传文件元信息
+            const fileInfo = {
+                type: 'file',
+                filePath: this.filePath,
+                fileName: this.fileName,
+                fileSize: this.fileSize,
+                totalLines: this.totalLines,
+                encoding: this.encoding
+            };
 
             await window.electronAPI.openCompareWindow({
-                original: originalText,
+                original: fileInfo,
                 compare: ''
             });
         } catch (error) {
@@ -139,20 +146,19 @@ class LargeFileEditor {
             return '';
         }
 
-        // 对于大文件，限制读取行数，避免卡顿
-        const MAX_LINES = 10000;
-        const linesToRead = Math.min(this.totalLines, MAX_LINES);
-
-        if (this.totalLines > MAX_LINES) {
-            console.warn(`文件过大，只读取前 ${MAX_LINES} 行进行比较`);
+        // 大文件提示
+        if (this.totalLines > 50000) {
+            console.warn(`文件较大（${this.totalLines.toLocaleString()} 行），读取全文可能需要较长时间`);
         }
 
-        // 分批读取，每批 100 行
-        const BATCH_SIZE = 100;
+        // 分批读取，每批 1000 行（优化：增大批次减少循环次数）
+        const BATCH_SIZE = 1000;
         const lines = [];
+        const totalBatches = Math.ceil(this.totalLines / BATCH_SIZE);
 
-        for (let batchStart = 1; batchStart <= linesToRead; batchStart += BATCH_SIZE) {
-            const batchEnd = Math.min(batchStart + BATCH_SIZE - 1, linesToRead);
+        for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+            const batchStart = batchIndex * BATCH_SIZE + 1;
+            const batchEnd = Math.min(batchStart + BATCH_SIZE - 1, this.totalLines);
 
             try {
                 const batchLines = await window.electronAPI.readFileLines(batchStart, batchEnd);
@@ -167,8 +173,12 @@ class LargeFileEditor {
                 }
             }
 
-            // 每批读取后让出时间片，避免阻塞 UI
-            if (batchStart + BATCH_SIZE <= linesToRead) {
+            // 更新进度
+            const progress = Math.round((batchIndex + 1) / totalBatches * 100);
+            this.showLoading(`正在读取文档... ${progress}%`, progress);
+
+            // 每 10 批让出一次时间片，减少 UI 阻塞但不过度
+            if (batchIndex % 10 === 9 && batchIndex < totalBatches - 1) {
                 await new Promise(resolve => setTimeout(resolve, 0));
             }
         }
