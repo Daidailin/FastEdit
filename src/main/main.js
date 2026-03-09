@@ -589,6 +589,86 @@ ipcMain.handle('close-compare-window', async () => {
     return { success: true };
 });
 
+let compareFileManager = null;
+
+ipcMain.handle('open-compare-file', async (event) => {
+    try {
+        const result = await dialog.showOpenDialog(compareWindow, {
+            properties: ['openFile'],
+            filters: [
+                { name: '文本文件', extensions: ['txt', 'log', 'json', 'xml', 'html', 'css', 'js', 'md'] },
+                { name: '所有文件', extensions: ['*'] }
+            ]
+        });
+
+        if (result.canceled || result.filePaths.length === 0) {
+            return { canceled: true };
+        }
+
+        const filePath = result.filePaths[0];
+
+        // 检测编码
+        const detectedEncoding = detectFileEncoding(filePath);
+        console.log('比较文件编码检测:', detectedEncoding);
+
+        // 创建内存映射文件管理器
+        if (compareFileManager) {
+            compareFileManager.close();
+        }
+
+        compareFileManager = new MemoryMappedFileManager(filePath, detectedEncoding.encoding);
+
+        const stats = fs.statSync(filePath);
+        const totalLines = compareFileManager.getLineCount();
+
+        return {
+            success: true,
+            filePath: filePath,
+            fileName: path.basename(filePath),
+            fileSize: stats.size,
+            totalLines: totalLines,
+            encoding: detectedEncoding.encoding
+        };
+    } catch (error) {
+        console.error('打开比较文件失败:', error);
+        throw error;
+    }
+});
+
+ipcMain.handle('read-compare-file-lines', async (event, { startLine, endLine }) => {
+    try {
+        if (!compareFileManager) {
+            throw new Error('比较文件未打开');
+        }
+
+        const lines = [];
+        for (let i = startLine; i <= endLine; i++) {
+            const content = compareFileManager.readLine(i);
+            lines.push({ lineNum: i, content: content });
+        }
+
+        return lines;
+    } catch (error) {
+        console.error(`读取比较文件第 ${startLine}-${endLine} 行失败:`, error);
+        throw error;
+    }
+});
+
+ipcMain.handle('get-compare-file-info', async () => {
+    try {
+        if (compareFileManager && compareFileManager.fileSize > 0) {
+            return {
+                size: compareFileManager.fileSize,
+                totalLines: compareFileManager.getLineCount(),
+                isFile: true
+            };
+        }
+        return null;
+    } catch (error) {
+        throw error;
+    }
+});
+
 app.whenReady().then(() => {
     createWindow();
 });

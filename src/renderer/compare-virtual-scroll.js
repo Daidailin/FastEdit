@@ -260,7 +260,13 @@ export class CompareEditor {
             const startLine = Math.max(1, lineNum - 5);
             const endLine = Math.min(this.fileSource.totalLines, lineNum + 5);
 
-            const lines = await window.electronAPI.readFileLines(startLine, endLine);
+            // 根据文档类型选择正确的读取 API
+            let lines;
+            if (this.isCompareFile) {
+                lines = await window.electronAPI.readCompareFileLines(startLine, endLine);
+            } else {
+                lines = await window.electronAPI.readFileLines(startLine, endLine);
+            }
 
             // 缓存读取的行
             for (const line of lines) {
@@ -314,6 +320,21 @@ export class CompareEditor {
      */
     setFileSource(fileInfo) {
         this.fileSource = fileInfo;
+        this.isCompareFile = false; // 标记为原始文档
+        this.lines = []; // 不保存全文
+        this.lineCache.clear();
+
+        // 创建占位数组，虚拟滚动只渲染可见区域
+        const placeholderLines = new Array(fileInfo.totalLines).fill('');
+        this.virtualScroll.setData(placeholderLines);
+    }
+
+    /**
+     * 设置比较文档文件型数据源
+     */
+    setCompareFileSource(fileInfo) {
+        this.fileSource = fileInfo;
+        this.isCompareFile = true; // 标记为比较文档
         this.lines = []; // 不保存全文
         this.lineCache.clear();
 
@@ -347,7 +368,13 @@ export class CompareEditor {
             const batchEnd = Math.min(batchStart + BATCH_SIZE - 1, totalLines);
 
             try {
-                const batchLines = await window.electronAPI.readFileLines(batchStart, batchEnd);
+                // 根据文档类型选择正确的读取 API
+                let batchLines;
+                if (this.isCompareFile) {
+                    batchLines = await window.electronAPI.readCompareFileLines(batchStart, batchEnd);
+                } else {
+                    batchLines = await window.electronAPI.readFileLines(batchStart, batchEnd);
+                }
                 for (const line of batchLines) {
                     lines.push(line.content);
                 }

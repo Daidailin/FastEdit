@@ -23,6 +23,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     compareTexts: ({ original, compare }) => ipcRenderer.invoke('compare-texts', { original, compare }),
     closeCompareWindow: () => ipcRenderer.invoke('close-compare-window'),
 
+    // 比较文件 API
+    openCompareFile: () => ipcRenderer.invoke('open-compare-file'),
+    readCompareFileLines: (startLine, endLine) => ipcRenderer.invoke('read-compare-file-lines', { startLine, endLine }),
+    getCompareFileInfo: () => ipcRenderer.invoke('get-compare-file-info'),
+
     // 事件监听
     onFileOpened: (callback) => ipcRenderer.on('file-opened', (event, data) => callback(data)),
     onLoadingProgress: (callback) => ipcRenderer.on('loading-progress', (event, data) => callback(data)),

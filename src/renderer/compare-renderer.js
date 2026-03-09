@@ -18,7 +18,6 @@ class CompareRenderer {
 
         // 文件型数据源支持
         this.originalFileInfo = null; // 原始文档文件信息
-        this.originalLineCache = new Map(); // 原始文档行缓存
         this.compareFileInfo = null; // 比较文档文件信息
 
         this.initElements();
@@ -261,29 +260,104 @@ class CompareRenderer {
     async loadFile(file, target) {
         if (!file) return;
 
-        // 检查文件大小，如果太大则提示用户
-        const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-        if (file.size > MAX_FILE_SIZE) {
+        const LARGE_FILE_THRESHOLD = 10 * 1024 * 1024; // 10MB
+
+        if (file.size > LARGE_FILE_THRESHOLD) {
+            // 大文件：使用 FileReader 分块读取，避免内存溢出
             const shouldContinue = confirm(
-                `文件较大（${this.formatFileSize(file.size)}），加载可能需要较长时间。\n` +
-                `建议只比较部分内容。\n\n是否继续加载？`
+                `文件较大（${this.formatFileSize(file.size)}），将使用大文件模式加载。\n` +
+                `注意：大文件模式下，虚拟滚动可以正常显示，但比较操作可能较慢。\n\n` +
+                `是否继续？`
             );
             if (!shouldContinue) {
                 return;
             }
+
+            try {
+                // 使用 FileReader 分块读取大文件
+                const text = await this.readFileLarge(file);
+                if (target === 'original') {
+                    this.setOriginalText(text);
+                } else {
+                    this.setCompareText(text);
+                }
+            } catch (error) {
+                console.error('读取大文件失败:', error);
+                alert('读取文件失败: ' + error.message);
+            }
+        } else {
+            // 小文件：使用浏览器 FileReader
+            try {
+                const text = await this.readFile(file);
+                if (target === 'original') {
+                    this.setOriginalText(text);
+                } else {
+                    this.setCompareText(text);
+                }
+            } catch (error) {
+                console.error('读取文件失败:', error);
+                alert('读取文件失败: ' + error.message);
+            }
+        }
+    }
+
+    /**
+     * 读取大文件（分块读取避免内存溢出）
+     */
+    async readFileLarge(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            const CHUNK_SIZE = 1024 * 1024; // 1MB 每块
+            
+            let offset = 0;
+            let result = '';
+            
+            reader.onload = (e) => {
+                result += e.target.result;
+                offset += CHUNK_SIZE;
+                
+                if (offset < file.size) {
+                    // 继续读取下一块
+                    const blob = file.slice(offset, offset + CHUNK_SIZE);
+                    reader.readAsText(blob);
+                } else {
+                    // 读取完成
+                    resolve(result);
+                }
+            };
+            
+            reader.onerror = (e) => {
+                reject(e);
+            };
+            
+            // 开始读取第一块
+            const firstBlob = file.slice(0, CHUNK_SIZE);
+            reader.readAsText(firstBlob);
+        });
+    }
+
+    /**
+     * 设置比较文档（文件型数据源）
+     */
+    async setCompareFile(fileInfo) {
+        this.compareFileInfo = fileInfo;
+        this.compareText = ''; // 不保存全文
+
+        // 显示文件信息
+        this.compareInfo.textContent = `${fileInfo.totalLines.toLocaleString()} 行`;
+
+        // 大文件提示
+        if (fileInfo.totalLines > 10000) {
+            this.compareWarning.classList.add('visible');
+            this.compareWarning.textContent = `大文件模式：已启用虚拟滚动，显示全文（${fileInfo.totalLines.toLocaleString()} 行）；比较操作可能较慢`;
+        } else {
+            this.compareWarning.classList.remove('visible');
         }
 
-        try {
-            const text = await this.readFile(file);
-            if (target === 'original') {
-                this.setOriginalText(text);
-            } else {
-                this.setCompareText(text);
-            }
-        } catch (error) {
-            console.error('读取文件失败:', error);
-            alert('读取文件失败: ' + error.message);
-        }
+        // 设置虚拟滚动编辑器使用按行读取
+        this.compareEditor.setCompareFileSource(fileInfo);
+        this.updateLineNumbers('compare');
+        this.clearCompareResult();
     }
 
     /**
@@ -330,12 +404,13 @@ class CompareRenderer {
     updateLineInfo(target) {
         let lineCount;
         if (target === 'original') {
-            // 优先使用文件信息中的行数
             lineCount = this.originalFileInfo
                 ? this.originalFileInfo.totalLines
                 : this.originalEditor.getLineCount();
         } else {
-            lineCount = this.compareEditor.getLineCount();
+            lineCount = this.compareFileInfo
+                ? this.compareFileInfo.totalLines
+                : this.compareEditor.getLineCount();
         }
         const infoEl = target === 'original' ? this.originalInfo : this.compareInfo;
         infoEl.textContent = `${lineCount.toLocaleString()} 行`;
@@ -353,6 +428,8 @@ class CompareRenderer {
         let lineCount;
         if (target === 'original' && this.originalFileInfo) {
             lineCount = this.originalFileInfo.totalLines;
+        } else if (target === 'compare' && this.compareFileInfo) {
+            lineCount = this.compareFileInfo.totalLines;
         } else {
             lineCount = editor.getLineCount();
         }
@@ -377,6 +454,8 @@ class CompareRenderer {
         let lineCount;
         if (target === 'original' && this.originalFileInfo) {
             lineCount = this.originalFileInfo.totalLines;
+        } else if (target === 'compare' && this.compareFileInfo) {
+            lineCount = this.compareFileInfo.totalLines;
         } else {
             lineCount = editor.getLineCount();
         }
@@ -454,7 +533,7 @@ class CompareRenderer {
                     const batchEnd = Math.min(batchStart + BATCH_SIZE - 1, totalLines);
 
                     try {
-                        console.log(`[比较] 读取第 ${currentBatch}/${totalBatches} 批: ${batchStart}-${batchEnd} 行`);
+                        console.log(`[比较] 读取原始文档第 ${currentBatch}/${totalBatches} 批: ${batchStart}-${batchEnd} 行`);
                         const batchLines = await window.electronAPI.readFileLines(batchStart, batchEnd);
                         for (const line of batchLines) {
                             lines.push(line.content);
@@ -467,10 +546,10 @@ class CompareRenderer {
                     }
 
                     // 更新进度：按批次数计算
-                    const progress = Math.round((currentBatch / totalBatches) * 50);
+                    const progress = Math.round((currentBatch / totalBatches) * 25);
                     this.btnCompare.textContent = `读取原始文档... ${progress}%`;
 
-                    // 让出事件循环（使用浏览器兼容的 setTimeout）
+                    // 让出事件循环
                     await new Promise(resolve => setTimeout(resolve, 0));
                 }
 
@@ -481,7 +560,47 @@ class CompareRenderer {
             }
 
             // 获取比较文档文本
-            const compareText = this.compareText;
+            let compareText = '';
+            if (this.compareFileInfo) {
+                // 文件型数据源：需要读取全文
+                this.btnCompare.textContent = '读取比较文档...';
+
+                const BATCH_SIZE = 5000;
+                const totalLines = this.compareFileInfo.totalLines;
+                const totalBatches = Math.ceil(totalLines / BATCH_SIZE);
+                const lines = [];
+                let currentBatch = 0;
+
+                for (let batchStart = 1; batchStart <= totalLines; batchStart += BATCH_SIZE) {
+                    currentBatch++;
+                    const batchEnd = Math.min(batchStart + BATCH_SIZE - 1, totalLines);
+
+                    try {
+                        console.log(`[比较] 读取比较文档第 ${currentBatch}/${totalBatches} 批: ${batchStart}-${batchEnd} 行`);
+                        const batchLines = await window.electronAPI.readCompareFileLines(batchStart, batchEnd);
+                        for (const line of batchLines) {
+                            lines.push(line.content);
+                        }
+                    } catch (error) {
+                        console.error(`[比较] 读取第 ${batchStart}-${batchEnd} 行失败:`, error);
+                        for (let i = batchStart; i <= batchEnd; i++) {
+                            lines.push('');
+                        }
+                    }
+
+                    // 更新进度：按批次数计算（25-50%）
+                    const progress = 25 + Math.round((currentBatch / totalBatches) * 25);
+                    this.btnCompare.textContent = `读取比较文档... ${progress}%`;
+
+                    // 让出事件循环
+                    await new Promise(resolve => setTimeout(resolve, 0));
+                }
+
+                compareText = lines.join('\n');
+                console.log(`[比较] 比较文档读取完成，共 ${lines.length} 行`);
+            } else {
+                compareText = this.compareText;
+            }
 
             if (!originalText && !compareText) {
                 this.updateSimilarity(0);
