@@ -1,0 +1,43 @@
+{
+  "name": "fastedit",
+  "version": "1.0.0",
+  "description": "大文件文本编辑器 - 支持800MB+文件快速加载和虚拟滚动",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win portable",
+    "pack": "electron-builder --dir"
+  },
+  "author": "FastEdit",
+  "license": "MIT",
+  "dependencies": {
+    "koffi": "^2.9.0",
+    "iconv-lite": "^0.6.3"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.fastedit.app",
+    "productName": "FastEdit",
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "FastEdit-Portable.exe"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ]
+  }
+}

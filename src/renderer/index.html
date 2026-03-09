@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FastEdit - 大文件文本编辑器</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            height: 100%;
+            overflow: hidden;
+            font-family: Consolas, 'Courier New', monospace;
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+        }
+
+        #app {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        /* 顶部工具栏 */
+        #toolbar {
+            height: 40px;
+            background-color: #252526;
+            border-bottom: 1px solid #3c3c3c;
+            display: flex;
+            align-items: center;
+            padding: 0 15px;
+            gap: 10px;
+        }
+
+        .toolbar-btn {
+            padding: 5px 15px;
+            background-color: #0e639c;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+            font-family: inherit;
+            transition: background-color 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .toolbar-btn:hover {
+            background-color: #1177bb;
+        }
+
+        .toolbar-btn.secondary {
+            background-color: #3c3c3c;
+        }
+
+        .toolbar-btn.secondary:hover {
+            background-color: #4c4c4c;
+        }
+
+        .toolbar-spacer {
+            flex: 1;
+        }
+
+        #editor-container {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+            position: relative;
+        }
+
+        #line-numbers {
+            width: 60px;
+            background-color: #252526;
+            text-align: right;
+            user-select: none;
+            border-right: 1px solid #3c3c3c;
+            font-size: 16px;
+            line-height: 24px;
+            color: #858585;
+            position: relative;
+            overflow: hidden;
+            overflow-y: auto;
+        }
+
+        #line-numbers::-webkit-scrollbar {
+            display: none;
+        }
+
+        #line-numbers .line {
+            padding: 0 10px;
+            box-sizing: border-box;
+        }
+
+        #editor {
+            flex: 1;
+            overflow: hidden;
+            position: relative;
+            background-color: #1e1e1e;
+        }
+
+        #editor-scroll {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            overflow-y: auto;
+            overflow-x: auto;
+        }
+
+        #editor-content {
+            position: relative;
+            min-height: 100%;
+            font-size: 16px;
+            line-height: 24px;
+            white-space: pre;
+            padding: 0;
+        }
+
+        .line {
+            height: 24px;
+            padding: 0 10px;
+            display: flex;
+            align-items: center;
+        }
+
+        .line:hover {
+            background-color: #2a2d2e;
+        }
+
+        .line.selected {
+            background-color: #2a2d2e;
+        }
+
+        #cursor {
+            position: absolute;
+            width: 2px;
+            height: 18px;
+            background-color: #aeafad;
+            display: none;
+            pointer-events: none;
+            animation: blink 1s infinite;
+        }
+
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
+
+        #status-bar {
+            height: 24px;
+            background-color: #007acc;
+            display: flex;
+            align-items: center;
+            padding: 0 10px;
+            font-size: 12px;
+            color: #ffffff;
+            justify-content: space-between;
+        }
+
+        #status-bar span {
+            margin-right: 20px;
+        }
+
+        #loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0, 0, 0, 0.7);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        #loading-overlay.hidden {
+            display: none;
+        }
+
+        #loading-spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid #3c3c3c;
+            border-top: 3px solid #007acc;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        #loading-text {
+            margin-top: 20px;
+            color: #d4d4d4;
+            font-size: 14px;
+        }
+
+        #loading-progress {
+            width: 300px;
+            height: 4px;
+            background-color: #3c3c3c;
+            margin-top: 15px;
+            border-radius: 2px;
+            overflow: hidden;
+        }
+
+        #loading-progress-bar {
+            height: 100%;
+            background-color: #007acc;
+            width: 0%;
+            transition: width 0.3s;
+        }
+
+        #welcome-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #1e1e1e;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 999;
+        }
+
+        #welcome-screen.hidden {
+            display: none;
+        }
+
+        #welcome-screen h1 {
+            font-size: 36px;
+            color: #007acc;
+            margin-bottom: 10px;
+        }
+
+        #welcome-screen p {
+            color: #858585;
+            margin-bottom: 30px;
+        }
+
+        #welcome-screen .shortcut {
+            background-color: #3c3c3c;
+            padding: 8px 16px;
+            border-radius: 4px;
+            color: #d4d4d4;
+            font-size: 14px;
+        }
+
+        #welcome-screen .shortcut kbd {
+            background-color: #2d2d2d;
+            padding: 2px 6px;
+            border-radius: 3px;
+            margin: 0 3px;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <!-- 顶部工具栏 -->
+        <div id="toolbar">
+            <button class="toolbar-btn" id="btn-compare" title="文本比较">
+                <span>⚖️</span> 文本比较
+            </button>
+            <button class="toolbar-btn secondary" id="btn-open" title="打开文件 (Ctrl+O)">
+                <span>📂</span> 打开
+            </button>
+            <button class="toolbar-btn secondary" id="btn-save" title="保存文件 (Ctrl+S)">
+                <span>💾</span> 保存
+            </button>
+            <div class="toolbar-spacer"></div>
+            <button class="toolbar-btn secondary" id="btn-zoom-in" title="放大 (Ctrl++)">
+                <span>🔍+</span>
+            </button>
+            <button class="toolbar-btn secondary" id="btn-zoom-out" title="缩小 (Ctrl+-)">
+                <span>🔍-</span>
+            </button>
+        </div>
+
+        <div id="editor-container">
+            <div id="line-numbers">
+                <div id="line-numbers-content"></div>
+            </div>
+            <div id="editor">
+                <div id="editor-scroll">
+                    <div id="editor-content"></div>
+                </div>
+                <div id="cursor"></div>
+            </div>
+        </div>
+        <div id="status-bar">
+            <div>
+                <span id="status-file">未打开文件</span>
+                <span id="status-size">0 B</span>
+            </div>
+            <div>
+                <span id="status-position">行 1, 列 1</span>
+                <span id="status-lines">行数: 0</span>
+            </div>
+        </div>
+    </div>
+
+    <div id="loading-overlay" class="hidden">
+        <div id="loading-spinner"></div>
+        <div id="loading-text">正在加载文件...</div>
+        <div id="loading-progress">
+            <div id="loading-progress-bar"></div>
+        </div>
+    </div>
+
+    <div id="welcome-screen">
+        <h1>FastEdit</h1>
+        <p>大文件文本编辑器 - 支持800MB+文件</p>
+        <div class="shortcut">按 <kbd>Ctrl</kbd> + <kbd>O</kbd> 打开文件</div>
+    </div>
+
+    <script type="module" src="editor.js"></script>
+</body>
+</html>

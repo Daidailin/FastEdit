@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>文本比较 - FastEdit</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            height: 100%;
+            overflow: hidden;
+            font-family: Consolas, 'Courier New', monospace;
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+        }
+
+        #compare-container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        /* 顶部工具栏 */
+        #toolbar {
+            height: 50px;
+            background-color: #252526;
+            border-bottom: 1px solid #3c3c3c;
+            display: flex;
+            align-items: center;
+            padding: 0 15px;
+            gap: 15px;
+        }
+
+        .toolbar-section {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .toolbar-label {
+            font-size: 12px;
+            color: #858585;
+            white-space: nowrap;
+        }
+
+        .toolbar-btn {
+            padding: 6px 16px;
+            background-color: #0e639c;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: background-color 0.2s;
+        }
+
+        .toolbar-btn:hover {
+            background-color: #1177bb;
+        }
+
+        .toolbar-btn.secondary {
+            background-color: #3c3c3c;
+        }
+
+        .toolbar-btn.secondary:hover {
+            background-color: #4c4c4c;
+        }
+
+        .toolbar-btn:disabled {
+            background-color: #555;
+            cursor: not-allowed;
+        }
+
+        /* 相似度显示 */
+        #similarity-display {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 0 20px;
+            background-color: #1e1e1e;
+            border: 1px solid #3c3c3c;
+            border-radius: 4px;
+            height: 36px;
+        }
+
+        #similarity-label {
+            font-size: 12px;
+            color: #858585;
+        }
+
+        #similarity-value {
+            font-size: 18px;
+            font-weight: bold;
+            color: #4ec9b0;
+        }
+
+        #similarity-bar {
+            width: 100px;
+            height: 6px;
+            background-color: #3c3c3c;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        #similarity-progress {
+            height: 100%;
+            background: linear-gradient(90deg, #f48771, #dcdcaa, #4ec9b0);
+            transition: width 0.3s;
+        }
+
+        .toolbar-spacer {
+            flex: 1;
+        }
+
+        /* 导航按钮 */
+        .nav-btn {
+            padding: 6px 12px;
+            background-color: #3c3c3c;
+            color: #d4d4d4;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .nav-btn:hover:not(:disabled) {
+            background-color: #4c4c4c;
+        }
+
+        .nav-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* 主要内容区域 */
+        #main-content {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+
+        /* 面板样式 */
+        .panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid #3c3c3c;
+        }
+
+        .panel:last-child {
+            border-right: none;
+        }
+
+        .panel-header {
+            height: 35px;
+            background-color: #252526;
+            border-bottom: 1px solid #3c3c3c;
+            display: flex;
+            align-items: center;
+            padding: 0 15px;
+            justify-content: space-between;
+        }
+
+        .panel-title {
+            font-size: 13px;
+            font-weight: bold;
+            color: #cccccc;
+        }
+
+        .panel-info {
+            font-size: 11px;
+            color: #858585;
+        }
+
+        .panel-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .panel-btn {
+            padding: 3px 10px;
+            background-color: #3c3c3c;
+            color: #d4d4d4;
+            border: none;
+            border-radius: 2px;
+            cursor: pointer;
+            font-size: 11px;
+        }
+
+        .panel-btn:hover {
+            background-color: #4c4c4c;
+        }
+
+        /* 编辑器区域 */
+        .editor-wrapper {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .line-numbers {
+            width: 50px;
+            min-width: 50px;
+            background-color: #1e1e1e;
+            border-right: 1px solid #3c3c3c;
+            overflow: hidden;
+            overflow-y: hidden;
+            user-select: none;
+            flex-shrink: 0;
+        }
+
+        .line-numbers-content {
+            font-size: 14px;
+            line-height: 22px;
+            color: #858585;
+            text-align: right;
+        }
+
+        .line-numbers .line {
+            padding: 0 8px;
+            height: 22px;
+            line-height: 22px;
+            box-sizing: border-box;
+        }
+
+        .line-numbers .line.diff-added {
+            background-color: rgba(215, 186, 125, 0.3);
+            color: #d7ba7d;
+        }
+
+        .line-numbers .line.diff-modified {
+            background-color: rgba(0, 122, 204, 0.3);
+            color: #4ec9b0;
+        }
+
+        .editor-content {
+            flex: 1;
+            overflow: auto;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .editor-text {
+            min-height: 100%;
+            padding: 0;
+            font-size: 14px;
+            line-height: 22px;
+            white-space: pre;
+            tab-size: 4;
+        }
+
+        .editor-text .line {
+            padding: 0 10px;
+            height: 22px;
+            display: flex;
+            align-items: center;
+        }
+
+        .editor-text .line:hover {
+            background-color: #2a2d2e;
+        }
+
+        /* 差异高亮 */
+        .editor-text .line.diff-added {
+            background-color: rgba(215, 186, 125, 0.15);
+        }
+
+        .editor-text .line.diff-added:hover {
+            background-color: rgba(215, 186, 125, 0.25);
+        }
+
+        .editor-text .line.diff-modified {
+            background-color: rgba(0, 122, 204, 0.15);
+        }
+
+        .editor-text .line.diff-modified:hover {
+            background-color: rgba(0, 122, 204, 0.25);
+        }
+
+        .editor-text .line.diff-deleted {
+            background-color: rgba(244, 135, 113, 0.15);
+        }
+
+        /* 当前差异行高亮 */
+        #compare-line-numbers .line.current-diff {
+            background-color: rgba(255, 255, 0, 0.5) !important;
+            font-weight: bold;
+        }
+
+        #original-line-numbers .line.current-diff {
+            background-color: rgba(255, 255, 0, 0.5) !important;
+            font-weight: bold;
+        }
+
+        /* 文本输入区域 */
+        .text-input {
+            width: 100%;
+            min-height: 100%;
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+            border: none;
+            padding: 0 10px;
+            font-family: Consolas, 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 22px;
+            resize: none;
+            outline: none;
+            box-sizing: border-box;
+            flex: 1;
+        }
+
+        /* 空状态提示 */
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #858585;
+            gap: 15px;
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            opacity: 0.5;
+        }
+
+        .empty-state-text {
+            font-size: 14px;
+        }
+
+        /* 滚动条样式 */
+        ::-webkit-scrollbar {
+            width: 10px;
+            height: 10px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #1e1e1e;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #424242;
+            border-radius: 5px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #4f4f4f;
+        }
+
+        /* 加载动画 */
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(30, 30, 30, 0.8);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+        }
+
+        .loading-overlay.hidden {
+            display: none;
+        }
+
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #3c3c3c;
+            border-top-color: #007acc;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* 文件输入 */
+        input[type="file"] {
+            display: none;
+        }
+
+        /* 虚拟滚动编辑器样式 */
+        .virtual-editor-container {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .virtual-editor {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            overflow: auto;
+            font-family: Consolas, 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 22px;
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+        }
+
+        .virtual-scroll-content {
+            position: relative;
+        }
+
+        .virtual-scroll-viewport {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+        }
+
+        .editor-line {
+            padding: 0 10px;
+            white-space: pre;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .editor-line:hover {
+            background-color: #2a2d2e;
+        }
+
+        /* 差异高亮 */
+        .editor-line.diff-added {
+            background-color: rgba(215, 186, 125, 0.15);
+        }
+
+        .editor-line.diff-added:hover {
+            background-color: rgba(215, 186, 125, 0.25);
+        }
+
+        .editor-line.diff-modified {
+            background-color: rgba(0, 122, 204, 0.15);
+        }
+
+        .editor-line.diff-modified:hover {
+            background-color: rgba(0, 122, 204, 0.25);
+        }
+
+        .editor-line.diff-deleted {
+            background-color: rgba(244, 135, 113, 0.15);
+        }
+
+        /* 大文件提示 */
+        .large-file-warning {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: rgba(244, 135, 113, 0.9);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 4px;
+            font-size: 12px;
+            z-index: 10;
+            display: none;
+        }
+
+        .large-file-warning.visible {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div id="compare-container">
+        <!-- 顶部工具栏 -->
+        <div id="toolbar">
+            <div class="toolbar-section">
+                <span class="toolbar-label">原始文档</span>
+                <button class="toolbar-btn secondary" id="btn-load-original">导入文件</button>
+                <button class="toolbar-btn secondary" id="btn-paste-original">粘贴</button>
+            </div>
+
+            <div class="toolbar-section">
+                <span class="toolbar-label">比较文档</span>
+                <button class="toolbar-btn secondary" id="btn-load-compare">导入文件</button>
+                <button class="toolbar-btn secondary" id="btn-paste-compare">粘贴</button>
+            </div>
+
+            <div class="toolbar-spacer"></div>
+
+            <!-- 相似度显示 -->
+            <div id="similarity-display">
+                <span id="similarity-label">相似度</span>
+                <span id="similarity-value">0.00%</span>
+                <div id="similarity-bar">
+                    <div id="similarity-progress" style="width: 0%"></div>
+                </div>
+            </div>
+
+            <div class="toolbar-spacer"></div>
+
+            <!-- 差异导航 -->
+            <div class="toolbar-section">
+                <button class="nav-btn" id="btn-prev-diff" disabled>
+                    <span>↑</span> 上一处
+                </button>
+                <button class="nav-btn" id="btn-next-diff" disabled>
+                    <span>↓</span> 下一处
+                </button>
+            </div>
+
+            <div class="toolbar-section">
+                <button class="toolbar-btn" id="btn-compare">开始比较</button>
+                <button class="toolbar-btn secondary" id="btn-clear">清空</button>
+                <button class="toolbar-btn secondary" id="btn-close">关闭</button>
+            </div>
+        </div>
+
+        <!-- 主要内容区域 -->
+        <div id="main-content">
+            <!-- 左侧面板：原始文档 -->
+            <div class="panel" id="original-panel">
+                <div class="panel-header">
+                    <span class="panel-title">原始文档</span>
+                    <div class="panel-actions">
+                        <span class="panel-info" id="original-info">0 行</span>
+                    </div>
+                </div>
+                <div class="editor-wrapper">
+                    <div class="line-numbers" id="original-line-numbers">
+                        <div class="line-numbers-content"></div>
+                    </div>
+                    <div class="virtual-editor-container" id="original-editor-container">
+                        <div class="large-file-warning" id="original-warning">大文件模式：仅显示前 10000 行</div>
+                        <div class="virtual-editor" id="original-editor"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右侧面板：比较文档 -->
+            <div class="panel" id="compare-panel">
+                <div class="panel-header">
+                    <span class="panel-title">比较文档</span>
+                    <div class="panel-actions">
+                        <span class="panel-info" id="compare-info">0 行</span>
+                    </div>
+                </div>
+                <div class="editor-wrapper">
+                    <div class="line-numbers" id="compare-line-numbers">
+                        <div class="line-numbers-content"></div>
+                    </div>
+                    <div class="virtual-editor-container" id="compare-editor-container">
+                        <div class="large-file-warning" id="compare-warning">大文件模式：仅显示前 10000 行</div>
+                        <div class="virtual-editor" id="compare-editor"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 文件输入 -->
+    <input type="file" id="file-input-original" accept=".txt,.js,.html,.css,.json,.md,.log">
+    <input type="file" id="file-input-compare" accept=".txt,.js,.html,.css,.json,.md,.log">
+
+    <script type="module" src="compare-renderer.js"></script>
+</body>
+</html>
